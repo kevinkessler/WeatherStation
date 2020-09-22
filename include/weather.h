@@ -31,6 +31,8 @@
 #define ANEMOMETER_PIN GPIO_NUM_4
 #define RAIN_PIN GPIO_NUM_33
 #define DEBUG_PIN GPIO_NUM_14
+#define DEFAULT_WIFI_CHANNEL (3)
+#define STATION_NAME "WeatherBase"
 
 typedef struct __attribute__((packed)) sensor_data_t {
     float temperature;
@@ -44,5 +46,7 @@ typedef struct __attribute__((packed)) sensor_data_t {
 } sensor_data_t;
 
 void collectData(sensor_data_t *);
+void espnowInit(bool);
+void send_msg(sensor_data_t * msg);
 
 #endif /* INCLUDE_WEATHER_H_ */

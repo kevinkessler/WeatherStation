@@ -22,21 +22,23 @@
  */
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <sys/time.h>
 #include "weather.h"
+#include "driver/adc.h"
 
 RTC_DATA_ATTR uint16_t windCount = 0;
 RTC_DATA_ATTR uint16_t rainCount = 0;
 RTC_DATA_ATTR esp_sleep_ext1_wakeup_mode_t rainState = ESP_EXT1_WAKEUP_ALL_LOW;
 RTC_DATA_ATTR uint64_t targetWake = 0;
+RTC_DATA_ATTR uint8_t espnow_channel;
+RTC_DATA_ATTR uint8_t macAddr[6];
 
 esp_sleep_wakeup_cause_t wakeup_reason;
 int windState = 0;
 
-
 void sendData() {
   sensor_data_t sensorData;
-  
   collectData(&sensorData);
 
   Serial.printf("Temperature=%f *C\n",sensorData.temperature);
@@ -47,7 +49,7 @@ void sendData() {
   Serial.printf("Rain Count=%d\n", sensorData.rain_count);
   Serial.printf("Anenomoeter Count=%d\n", sensorData.anemometer_count);
   Serial.printf("Anemometer Gust=%d\n",sensorData.anemometer_gust);
-
+  send_msg(&sensorData);
 }
 
 uint64_t getRemainingTime() {
@@ -102,15 +104,37 @@ void handle_wakeup(){
       break;
     case ESP_SLEEP_WAKEUP_TIMER : 
       Serial.println("Wakeup caused by timer"); 
+      espnowInit(false);
       sendData();
 
       break;
     case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
     case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
-    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+    default : 
+      Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); 
+      espnowInit(true);
+      break;
   }
 
+}
+
+void gotoSleep() {
+
   configureSleepMode();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  adc_power_off();
+
+  //Turn off GPIOs for power savings
+  pinMode(ADC_ALERT_PIN,OUTPUT);
+  pinMode(GPIO_NUM_21,OUTPUT);
+  pinMode(GPIO_NUM_22,OUTPUT);
+  pinMode(GPIO_NUM_15,OUTPUT);
+
+  digitalWrite(DEBUG_PIN,HIGH);
+  esp_deep_sleep_start();
+
 }
 
 void setup() {
@@ -126,16 +150,8 @@ void setup() {
 
   handle_wakeup();
 
-  configureSleepMode();
-
-  //Turn off GPIOs for power savings
-  pinMode(ADC_ALERT_PIN,OUTPUT);
-  pinMode(GPIO_NUM_21,OUTPUT);
-  pinMode(GPIO_NUM_22,OUTPUT);
-
-  digitalWrite(DEBUG_PIN,HIGH);
-  esp_deep_sleep_start();
-
+  delay(10);
+  gotoSleep();
 }
 
 void loop() {
