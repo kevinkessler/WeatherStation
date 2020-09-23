@@ -21,13 +21,13 @@
  *
  */
 #include <Wire.h>
-#include <Adafruit_BMP085.h>
-#include <HTU21D.h>
+#include <SPI.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
 #include <ADS1115.h>
 #include "weather.h"
 
-Adafruit_BMP085 bmp;
-HTU21D htu(HTU21D_RES_RH12_TEMP14);
+Adafruit_BME280 bme;
 ADS1115 adc(ADS1115_ADDRESS_ADDR_GND);
 
 extern uint16_t windCount;
@@ -60,13 +60,22 @@ void collectData(sensor_data_t *data) {
   adc.triggerConversion();
 
   // Work on the BMP while the ADC conversion is happening
-  if (!bmp.begin()) {
-    Serial.println("Could not find a valid BMP085 sensor, check wiring!");
+  uint8_t status;
+  if (!(status=bme.begin(0x76,&Wire))) {
+    Serial.println("Could not find a valid BME280 sensor, check wiring!");
+    Serial.println(status);
     data->pressure = -1;
     data->temperature = 999.0;
+    data->humidity=999.0;
   } else {
-    data->temperature = bmp.readTemperature();
-    data->pressure = bmp.readPressure();  
+    bme.setSampling(Adafruit_BME280::MODE_FORCED, // Go to sleep after one reading
+                    Adafruit_BME280::SAMPLING_X1, // temperature
+                    Adafruit_BME280::SAMPLING_X1, // pressure
+                    Adafruit_BME280::SAMPLING_X1, // humidity
+                    Adafruit_BME280::FILTER_OFF );
+    data->temperature = bme.readTemperature();
+    data->pressure = bme.readPressure();  
+    data->humidity = bme.readHumidity();
   }
 
   // Wait if the conversion is still not finished
@@ -80,13 +89,6 @@ void collectData(sensor_data_t *data) {
   digitalWrite(WIND_VANE_PIN_VCC,1);
   adc.setMultiplexer(ADS1115_MUX_P1_NG);
   adc.triggerConversion();
-
-  if(!htu.begin()) {
-    Serial.println("Could not find a valid HTU21D sensor");
-    data->humidity = 999.0;
-  } else {
-      data->humidity = htu.readCompensatedHumidity();
-  }
 
   // Wait if the conversion is still not finished
   pollAlertReadyPin();

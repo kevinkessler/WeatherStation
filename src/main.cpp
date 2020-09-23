@@ -150,7 +150,7 @@ void setup() {
 
   handle_wakeup();
 
-  delay(10);
+  //delay(10);
   gotoSleep();
 }
 
