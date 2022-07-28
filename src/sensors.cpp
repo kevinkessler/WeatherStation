@@ -29,20 +29,64 @@
 
 Adafruit_BME280 bme;
 ADS1115 adc(ADS1115_ADDRESS_ADDR_GND);
+uint8_t s35770Addr=0x32;
 
 extern uint16_t windCount;
 extern uint16_t rainCount;
+extern esp_sleep_wakeup_cause_t wakeup_reason;
 
 void pollAlertReadyPin() {
-  for (uint32_t i = 0; i<100000; i++)
+  for (uint32_t i = 0; i<250000; i++)
     if (!digitalRead(ADC_ALERT_PIN)) return;
    Serial.println("Failed to wait for AlertReadyPin, it's stuck high!");
 }
 
-uint8_t convertMVtoDir(float mv) {
-    return 1;
+uint16_t convertMVtoDir(float mv) {
+  //ADC Error
+  if (mv == 0.0) return 0xFFFF;
+
+  // Have to fudge these numbers a bit to account for the fact that the higher the resistance, the
+  // Measured voltage is higher than expected. I don't know why
+  if (mv < 241.2) return 113;
+  if (mv < 285.0) return 68;
+  if (mv < 382.2) return 90; 
+  if (mv < 536.2) return 158;
+  if (mv < 733.0) return 135;
+  if (mv < 906.9) return 203;
+  if (mv < 1175.3) return 180;
+  if (mv < 1471.1) return 23;
+  if (mv < 1798.3) return 45;
+  if (mv < 2083.0) return 248;
+  if (mv < 2262.1) return 225;
+  if (mv < 2521.7) return 338;
+  if (mv < 2731.2) return 0;
+  if (mv < 2900.1) return 293;
+  if (mv < 3096.9) return 315;
+  if (mv < 3322.5) return 270;
+  
+  // Some Error Happened
+  return 0xFFFF;
 }
 
+void resetS35770(){
+    Wire.beginTransmission(s35770Addr);
+    Wire.write(0b10000001);
+    Wire.write(0x00);
+    Wire.write(0x00);
+    Wire.write(0b00000010);
+    Wire.endTransmission();
+}
+
+uint32_t readS35770Count() {
+    Wire.requestFrom(s35770Addr, (uint8_t)3);
+    uint8_t b1 = Wire.read();
+    uint8_t b2 = Wire.read();
+    uint8_t b3 = Wire.read();
+
+    uint32_t retval=(b1<<16)+(b2 << 8) + b3;
+
+    return retval;
+}
 void collectData(sensor_data_t *data) {
   // Required for ADS1115 which does not initialize i2c  
   Wire.begin();
@@ -50,9 +94,12 @@ void collectData(sensor_data_t *data) {
   // Turn on Power divider
   digitalWrite(POWER_PIN_GND,HIGH);
 
+  // Power on wind vane
+  digitalWrite(WIND_VANE_PIN_VCC,1);
+
   adc.initialize();
   adc.setMode(ADS1115_MODE_SINGLESHOT);
-  adc.setRate(ADS1115_RATE_128);
+  adc.setRate(ADS1115_RATE_32);
   adc.setGain(ADS1115_PGA_4P096);
   adc.setConversionReadyPinMode();
 
@@ -85,8 +132,6 @@ void collectData(sensor_data_t *data) {
   // Disable Power Divider
   digitalWrite(POWER_PIN_GND,LOW);
 
-  // Power on wind vane
-  digitalWrite(WIND_VANE_PIN_VCC,1);
   adc.setMultiplexer(ADS1115_MUX_P1_NG);
   adc.triggerConversion();
 
@@ -94,12 +139,12 @@ void collectData(sensor_data_t *data) {
   pollAlertReadyPin();
   data->direction = convertMVtoDir(adc.getMilliVolts(false));
 
-  data->rain_count=rainCount;
+  data->rain=rainCount * 0.011;
   rainCount=0;
-  data->anemometer_count=windCount;
-  windCount=0;
-  data->anemometer_gust=3;
+  data->wind_speed=(1.492 * readS35770Count()) / (float)SLEEP_SECS;
+  resetS35770();
   
+  data->wakeup_reason = wakeup_reason;
 
   //Power off vane
   digitalWrite(WIND_VANE_PIN_VCC,0);

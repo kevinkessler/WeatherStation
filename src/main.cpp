@@ -26,29 +26,34 @@
 #include <sys/time.h>
 #include "weather.h"
 #include "driver/adc.h"
+#include "soc/rtc_cntl_reg.h"
+#include "esp_task_wdt.h"
 
-RTC_DATA_ATTR uint16_t windCount = 0;
 RTC_DATA_ATTR uint16_t rainCount = 0;
-RTC_DATA_ATTR esp_sleep_ext1_wakeup_mode_t rainState = ESP_EXT1_WAKEUP_ALL_LOW;
 RTC_DATA_ATTR uint64_t targetWake = 0;
 RTC_DATA_ATTR uint8_t espnow_channel;
 RTC_DATA_ATTR uint8_t macAddr[6];
+RTC_DATA_ATTR uint8_t wake_count=0;
 
 esp_sleep_wakeup_cause_t wakeup_reason;
-int windState = 0;
+bool sendSuccess = false;
+bool sendFailure = false;
+uint8_t failureCount = 0;
+sensor_data_t sensorData;
+int rainState = 0;
 
 void sendData() {
-  sensor_data_t sensorData;
+
   collectData(&sensorData);
 
+  Serial.printf("Wakeup Reason=%d\n", sensorData.wakeup_reason);
   Serial.printf("Temperature=%f *C\n",sensorData.temperature);
   Serial.printf("Pressure=%d Pa\n",sensorData.pressure);
   Serial.printf("Humidity=%f\n",sensorData.humidity);
   Serial.printf("Battery Volts=%f mV\n",sensorData.battery_millivolts);
   Serial.printf("Direction=%d\n",sensorData.direction);
-  Serial.printf("Rain Count=%d\n", sensorData.rain_count);
-  Serial.printf("Anenomoeter Count=%d\n", sensorData.anemometer_count);
-  Serial.printf("Anemometer Gust=%d\n",sensorData.anemometer_gust);
+  Serial.printf("Rain Count=%f\n", sensorData.rain);
+  Serial.printf("Anemometer Count=%f\n", sensorData.wind_speed);
   send_msg(&sensorData);
 }
 
@@ -59,19 +64,18 @@ uint64_t getRemainingTime() {
   uint64_t tvticks=tv.tv_sec * 1E06 + tv.tv_usec;
   if(targetWake < tvticks ) {
     targetWake=tvticks + (SLEEP_SECS * 1E06);
-    if(wakeup_reason != ESP_SLEEP_WAKEUP_TIMER)
-      sendData();
+    //if(wakeup_reason != ESP_SLEEP_WAKEUP_TIMER)
+    //  sendData();
   }
 
   return targetWake-tvticks;
 }
 void configureSleepMode() {
   esp_sleep_enable_timer_wakeup(getRemainingTime());
-  pinMode(RAIN_PIN, INPUT);
-  pinMode(ANEMOMETER_PIN, INPUT);
-  uint64_t mask = 0x200000000;
-  esp_sleep_enable_ext1_wakeup(mask,rainState);
-  esp_sleep_enable_ext0_wakeup(ANEMOMETER_PIN, windState);
+  
+  //Supress spurous interrupts that are occuring after restart
+  if(wakeup_reason != ESP_SLEEP_WAKEUP_UNDEFINED)
+    esp_sleep_enable_ext0_wakeup(RAIN_PIN, rainState);
 }
 
 void handle_wakeup(){
@@ -81,38 +85,47 @@ void handle_wakeup(){
   {
     case ESP_SLEEP_WAKEUP_EXT0 :
       //Serial.println("Wakeup caused by external signal using RTC_IO"); 
-      state=digitalRead(ANEMOMETER_PIN);
+      state=digitalRead(RAIN_PIN);
       if(state == 1) { 
         Serial.println("High");
-        windCount++;
-        windState=0;
+        rainCount++;
+        rainState=0;
       } else {
         Serial.println("Low");
-        windState=1;
+        rainState=1;
       }
+      //No data being send, so just go to sleep
+      sendSuccess=true;
       break;
     case ESP_SLEEP_WAKEUP_EXT1 : 
       //Serial.println("Wakeup caused by external signal using RTC_CNTL"); 
-      if(rainState == ESP_EXT1_WAKEUP_ANY_HIGH) { 
-        Serial.println("High");
-        rainCount++;
-        rainState=ESP_EXT1_WAKEUP_ALL_LOW;
-      } else {
-        Serial.println("Low");
-        rainState=ESP_EXT1_WAKEUP_ANY_HIGH;
-      }
       break;
     case ESP_SLEEP_WAKEUP_TIMER : 
-      Serial.println("Wakeup caused by timer"); 
-      espnowInit(false);
+      //Serial.println("Wakeup caused by timer"); 
+      // Every half hour requery the SSID of the BaseStation to adjust if something has changed with the Base Station
+      if(wake_count > 60) {
+        wake_count = 0;
+        espnowInit(true);
+      } else {
+        wake_count++;
+        espnowInit(false);
+      }
+
       sendData();
 
       break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : 
+      //Serial.println("Wakeup caused by touchpad"); 
+      break;
+    case ESP_SLEEP_WAKEUP_ULP : 
+      //Serial.println("Wakeup caused by ULP program"); 
+      break;
     default : 
-      Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); 
+      //Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason);
+
       espnowInit(true);
+      //No data being send, so just go to sleep
+      sendData();
       break;
   }
 
@@ -138,22 +151,45 @@ void gotoSleep() {
 }
 
 void setup() {
+  // Start watchdog timer
+  esp_task_wdt_init(5, true);
+  esp_task_wdt_add(NULL);
+
   pinMode(ADC_ALERT_PIN,INPUT_PULLUP);
   pinMode(POWER_PIN_GND,OUTPUT);
   pinMode(WIND_VANE_PIN_VCC, OUTPUT);
   pinMode(DEBUG_PIN,OUTPUT);
+  pinMode(RAIN_PIN, INPUT);
 
   digitalWrite(DEBUG_PIN,LOW);
+
   Serial.begin(115200);
 
   digitalWrite(POWER_PIN_GND,LOW);
 
   handle_wakeup();
 
-  //delay(10);
-  gotoSleep();
 }
 
 void loop() {
+  if(sendSuccess) {
+    // Make sure watchdog doesn't reset as we are going to sleep
+    esp_task_wdt_reset();
+    gotoSleep();
+  }
+
+  if(sendFailure) {
+    // Keep watchdog alive as long as we are retrying sends
+    // Let watchdog reset if neither sendFailure ot SendSuccess happen
+    esp_task_wdt_reset();
+    failureCount++;
+    //If we get more than 10 failure, just pretend it worked, so the ESP goes back to sleep;
+    if(failureCount> 10) {
+      sendSuccess = true;
+    } else {
+      delay(100);
+      send_msg(&sensorData);
+    }
+  }
 
 }

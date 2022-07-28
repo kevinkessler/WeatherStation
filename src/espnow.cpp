@@ -28,6 +28,9 @@
 
 extern uint8_t espnow_channel;
 extern uint8_t macAddr[6];
+extern bool sendSuccess;
+extern bool sendFailure;
+
 static uint8_t broadcast_mac[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 static void handle_error(esp_err_t err)
@@ -76,6 +79,7 @@ void send_msg(sensor_data_t * msg)
   if (ESP_OK != status)
   {
     Serial.println("Error sending message");
+    sendFailure=true;
     handle_error(status);
   }
 }
@@ -86,11 +90,12 @@ static void msg_send_cb(const uint8_t* mac, esp_now_send_status_t sendStatus)
   switch (sendStatus)
   {
     case ESP_NOW_SEND_SUCCESS:
-      //Serial.println("Send success");
+      sendSuccess=true;
       break;
 
     case ESP_NOW_SEND_FAIL:
       Serial.println("Send Failure");
+      sendFailure=true;
       break;
 
     default:
@@ -111,15 +116,15 @@ void espnowInit(bool scan)
     uint8_t networks = WiFi.scanNetworks();
     for(int n=0;n<networks;n++) {
         Serial.printf("%d %s   %d   %d %s \n", n,WiFi.SSID(n).c_str(),WiFi.RSSI(n), WiFi.channel(n), WiFi.BSSIDstr(n).c_str());
-        for(int i=0;i<8;i++) {
+        /*for(int i=0;i<8;i++) {
             Serial.print(WiFi.BSSID(n)[i]);
             Serial.print(" ");
         }
-        Serial.println();
+        Serial.println();*/
 
         if(WiFi.SSID(n).indexOf(STATION_NAME) == 0)
         {
-            Serial.println("Found");
+            //Serial.println("Found");
             memcpy(macAddr, WiFi.BSSID(n), 6);
             espnow_channel = WiFi.channel(n);
         }
@@ -156,5 +161,4 @@ void espnowInit(bool scan)
     Serial.println("Could not register send callback");
     handle_error(status);
   }
- 
 }

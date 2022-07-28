@@ -24,25 +24,24 @@
 #ifndef INCLUDE_WEATHER_H_
 #define INCLUDE_WEATHER_H_
 
-#define SLEEP_SECS 10
+#define SLEEP_SECS 30
 #define ADC_ALERT_PIN GPIO_NUM_27
 #define WIND_VANE_PIN_VCC GPIO_NUM_26
 #define POWER_PIN_GND GPIO_NUM_25
-#define ANEMOMETER_PIN GPIO_NUM_4
-#define RAIN_PIN GPIO_NUM_33
+#define RAIN_PIN GPIO_NUM_4
 #define DEBUG_PIN GPIO_NUM_14
 #define DEFAULT_WIFI_CHANNEL (3)
 #define STATION_NAME "WeatherBase"
 
 typedef struct __attribute__((packed)) sensor_data_t {
+    uint8_t wakeup_reason;
     float temperature;
     int32_t pressure;
     float humidity;
     float battery_millivolts;
-    uint8_t direction;
-    uint16_t anemometer_count;
-    uint16_t anemometer_gust;
-    uint16_t rain_count;
+    uint16_t direction;
+    float wind_speed;
+    float rain;
 } sensor_data_t;
 
 void collectData(sensor_data_t *);
